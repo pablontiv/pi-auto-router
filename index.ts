@@ -2175,6 +2175,20 @@ export default function (pi: ExtensionAPI) {
       const activeModel = ctx.model;
       const activeRouteId = activeModel?.provider === PROVIDER_ID ? activeModel.id : undefined;
 
+      if (subcommand === "status") {
+        const activeModelText = activeModel ? `${activeModel.provider}/${activeModel.id}` : "none";
+        const routeText = activeRouteId
+          ? getStatusLine(activeRouteId)
+          : "No auto-router route is selected. Use /model or /auto-router switch <route>.";
+        ctx.ui.notify([
+          `Active Pi model: ${activeModelText}`,
+          routeText,
+          `Available routes: ${Object.keys(routesCache).join(", ") || "none"}`,
+          ...(configError ? [`Warning: ${configError}`] : []),
+        ].join("\n"), configError ? "warning" : "info");
+        return;
+      }
+
       if (subcommand === "switch") {
         if (!remainder) {
           ctx.ui.notify("Usage: /auto-router switch <route|alias|provider/model>", "error");
