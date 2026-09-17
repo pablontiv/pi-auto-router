@@ -123,9 +123,23 @@ export const CLAUDE_SEVEN_DAY_WINDOW_MS = 7 * DAY_MS;
 export const GOOGLE_DAILY_WINDOW_MS = DAY_MS;
 
 export function resolveUsageEndpoints(env: NodeJS.ProcessEnv = process.env): UsageEndpoints {
+  // A usage endpoint receives the user's OAuth bearer token. Only honor
+  // overrides that are HTTPS and point at an expected Google host; anything
+  // else fails closed to the default endpoint instead of exfiltrating the token.
+  const ALLOWED_HOSTS = new Set([
+    "cloudcode-pa.googleapis.com",
+    "daily-cloudcode-pa.sandbox.googleapis.com",
+  ]);
   const configured = (value: string | undefined, fallback: string) => {
     const trimmed = value?.trim();
-    return trimmed ? trimmed : fallback;
+    if (!trimmed) return fallback;
+    try {
+      const url = new URL(trimmed);
+      if (url.protocol !== "https:" || !ALLOWED_HOSTS.has(url.hostname)) return fallback;
+      return trimmed;
+    } catch {
+      return fallback;
+    }
   };
 
   return {
@@ -216,10 +230,13 @@ export function readAuth(authFile = DEFAULT_AUTH_FILE): AuthData | null {
 export function writeAuth(auth: AuthData, authFile = DEFAULT_AUTH_FILE): boolean {
   try {
     const dir = path.dirname(authFile);
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     const tmpPath = `${authFile}.tmp-${process.pid}-${Date.now()}`;
-    fs.writeFileSync(tmpPath, JSON.stringify(auth, null, 2));
+    // Credential files are owner-only regardless of the process umask, and the
+    // rename target inherits the temp file's mode (0600), never the old file's.
+    fs.writeFileSync(tmpPath, JSON.stringify(auth, null, 2), { mode: 0o600 });
     fs.renameSync(tmpPath, authFile);
+    fs.chmodSync(authFile, 0o600);
     return true;
   } catch {
     return false;
