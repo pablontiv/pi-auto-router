@@ -731,7 +731,21 @@ async function tryTarget(
     innerOptions.maxTokens = Math.min(routeMaxTokens, innerModel.maxTokens);
   }
   const optimized = applyCacheOptimizerHints(sanitized, innerOptions, outerModel.id, innerModel, routingScope.sessionId);
-  const inner = streamSimple(innerModel, optimized.context, optimized.options);
+  // Prefer the host's own provider implementation when available: providers
+  // with custom APIs (e.g. devin-local) are registered only in the host
+  // ModelRegistry and cannot be dispatched through pi-ai's legacy compat
+  // registry (which only knows the builtin APIs). The host provider keeps the
+  // credential/provider pairing intact because it owns its own auth channel.
+  const hostRegistry = (context as any)?.modelRegistry ?? latestUiContext?.modelRegistry;
+  const hostProvider = typeof hostRegistry?.getProvider === "function"
+    ? hostRegistry.getProvider(innerModel.provider)
+    : undefined;
+  const hostStreamSimple = hostProvider && typeof (hostProvider as any).streamSimple === "function"
+    ? (hostProvider as any).streamSimple.bind(hostProvider)
+    : null;
+  const inner = hostStreamSimple
+    ? hostStreamSimple(innerModel, optimized.context, optimized.options)
+    : streamSimple(innerModel, optimized.context, optimized.options);
   let lastMessage: AssistantMessage | undefined;
 
   try {

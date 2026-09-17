@@ -10,6 +10,7 @@
 - **Credential file permissions**: `writeAuth` writes temporary files with mode `0600` and enforces `0600` after rename, so OAuth refreshes no longer replace a private `auth.json` with a world-readable file under permissive umasks. Parent directories are created with `0700`.
 - **Usage endpoint overrides are validated**: `PI_GEMINI_USAGE_ENDPOINT` / `PI_ANTIGRAVITY_USAGE_ENDPOINT` are honored only for HTTPS URLs on expected Google hosts; anything else falls back to the default endpoint instead of sending OAuth bearer tokens to arbitrary (possibly plaintext) URLs.
 - **Global system-prompt nudge is opt-in**: the `before_agent_start` tool-naming nudge (which modifies the system prompt of every agent run, not just auto-router requests) is now disabled by default; enable with `AUTO_ROUTER_TOOL_NUDGE=1`.
+- **Host-registered provider APIs can be routed**: inner streaming now prefers the host `ModelRegistry` provider's own `streamSimple` when available, falling back to pi-ai's legacy compat dispatch. Providers with custom host-registered APIs (e.g. Devin's `devin-local`) previously failed with `No API provider registered for api: ...` when routed, even though they worked when selected directly.
 
 ## 0.2.4
 
