@@ -556,18 +556,27 @@ function resolveModelFromRegistry(target: RouteTarget, context?: Context): Model
       try {
         if (target.modelId.includes("/")) {
           const [p, m] = target.modelId.split("/");
-          return getModelLoose(p, m);
+          // Only honor an embedded prefix when it matches the declared provider;
+          // otherwise this would silently resolve a DIFFERENT provider's model
+          // and pass it the declared provider's credential.
+          if (p === provider) return getModelLoose(p, m);
         }
       } catch {}
       return undefined;
     }
   })();
-  if (direct) return wrapTarget(direct);
+  if (direct) {
+    if (direct.provider !== provider && target.provider !== "claude-agent-sdk") {
+      // Defense in depth: never return a model owned by another provider.
+      return undefined;
+    }
+    return wrapTarget(direct);
+  }
 
-  // Registry search via extracted matching logic
+  // Registry search via extracted matching logic (strictly provider-scoped)
   if (available.length > 0) {
     const match = findModelInRegistry(available, provider, target.modelId);
-    if (match) return wrapTarget(match);
+    if (match && match.provider.toLowerCase() === provider.toLowerCase()) return wrapTarget(match);
   }
 
   return undefined;
@@ -781,7 +790,19 @@ async function tryTarget(
         outer.push(event);
       } else {
         buffered.push(event);
-        if (sawSubstantive || event.type === "done") flush();
+        if (sawSubstantive) {
+          flush();
+        } else if (event.type === "done") {
+          // A `done` event closes the outer stream permanently. Classify before
+          // forwarding: a retryable terminal message must NOT be pushed, or the
+          // caller would see the first provider's failure while a later target
+          // actually succeeded.
+          const doneError = event.message?.errorMessage ?? "";
+          const isRetryableDone =
+            (event.message?.stopReason === "error" || Boolean(event.message?.errorMessage)) &&
+            (shouldFailOverThoughtSignatureError(doneError, sawSubstantive) || isRetryableError(doneError));
+          if (!isRetryableDone) flush();
+        }
       }
     }
   } catch (error) {
@@ -1256,13 +1277,17 @@ function streamAutoRouter(model: Model<Api>, context: Context, options?: SimpleS
         preferProviders: effectiveHints?.preferProviders,
       });
       const orderedAudited = [...partition.promoted, ...partition.normal, ...partition.demoted];
+      // Fail-open recovery (documented for budgets/constraints) must stay INSIDE
+      // the policy-filtered set: exclude-provider and force-billing are hard
+      // boundaries, so never fall back to the unfiltered `healthy` list.
       const pipelineTargets = orderedAudited.length > 0
         ? orderedAudited
-        : (solved.candidates.length > 0 ? solved.candidates : healthy);
+        : (solved.candidates.length > 0 ? solved.candidates : filteredHealthy);
       // In shadow mode: use legacy config-order targets for actual routing,
-      // but fall back to pipeline targets if legacy is exhausted.
+      // but fall back to pipeline targets if legacy is exhausted. Policy
+      // exclusions still apply in shadow mode.
       const legacyTargets = shadowMode
-        ? healthy.filter((t) => {
+        ? filteredHealthy.filter((t) => {
             if (!getProviderHealthCache().isHealthy(t.provider, t.authProvider)) return false;
             const c = cooldowns.get(getTargetKey(t, routeId));
             return !c || c.until <= Date.now();
@@ -2105,10 +2130,14 @@ export default function (pi: ExtensionAPI) {
   pi.on("agent_start", async (_event, ctx) => updateUi(ctx));
   pi.on("agent_end", async (_event, ctx) => updateUi(ctx));
 
-  // Correct tool-name hallucinations: the model often invents MCP-style names
-  // (e.g. mcp__tavily__tavily_search) for tools that are actually registered
-  // as native pi tools (web_search, web_extract). Append a hard nudge.
-  pi.on("before_agent_start", async (event) => {
+  // Optional tool-name nudge: modifies the GLOBAL system prompt of every agent
+  // run (not just auto-router requests), so it is opt-in via
+  // AUTO_ROUTER_TOOL_NUDGE=1 rather than installed by default.
+  const toolNudgeEnabled = (() => {
+    const raw = process.env.AUTO_ROUTER_TOOL_NUDGE;
+    return raw === "1" || (raw ?? "").toLowerCase() === "true" || (raw ?? "").toLowerCase() === "on";
+  })();
+  if (toolNudgeEnabled) pi.on("before_agent_start", async (event) => {
     const nudge = [
       "",
       "## Tool naming (IMPORTANT)",

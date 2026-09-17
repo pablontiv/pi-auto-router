@@ -216,11 +216,15 @@ export type RegistryModel = { provider: string; id: string; name?: string; conte
 /**
  * Find a model in the available registry that matches the requested provider/modelId.
  *
- * Search order:
+ * Search order (all strictly within the requested provider):
  * 1. Exact match (id equality, tail match, ends-with)
  * 2. Normalized match (lowercase, stripped tags)
  * 3. Partial match (substring in id or name)
- * 4. Fallback to global search across all providers
+ *
+ * Security invariant: there is deliberately NO cross-provider fallback. A route
+ * target pinned to provider A must never resolve to provider B's model — the
+ * router passes the target's credential to whatever model is returned, so a
+ * cross-provider match would send the prompt and A's API key to B.
  */
 export function findModelInRegistry(
   available: RegistryModel[],
@@ -258,16 +262,14 @@ export function findModelInRegistry(
     return list.find(matchExact) ?? list.find(matchNormalized) ?? list.find(matchPartial);
   };
 
-  // Provider-specific search
+  // Provider-scoped search only. A model that exists solely under another
+  // provider is NOT a match: fail closed so routing moves to the next declared
+  // target instead of silently crossing the provider trust boundary.
   if (Array.isArray(available) && available.length > 0) {
     const providerMatches = available.filter((m) =>
       String(m.provider ?? "").toLowerCase() === provider.toLowerCase(),
     );
-    const pick = findInList(providerMatches);
-    if (pick) return pick;
-
-    // Fallback: global search across all providers
-    return findInList(available);
+    return findInList(providerMatches);
   }
 
   return undefined;

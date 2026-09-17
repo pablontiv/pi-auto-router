@@ -654,10 +654,17 @@ describe("findModelInRegistry", () => {
     assert.equal(found!.id, "claude-sonnet-4-6");
   });
 
-  it("falls back to global search when provider doesn't match", () => {
+  it("never falls back to global search when provider doesn't match", () => {
+    // Security invariant: a route target pinned to provider A must never resolve
+    // to provider B's model. Cross-provider fuzzy fallback would let a typo or an
+    // upstream rename silently send the prompt AND provider A's credential to B.
     const found = findModelInRegistry(models, "deepseek", "gpt-5-high");
-    assert.ok(found);
-    assert.equal(found!.provider, "openai-codex");
+    assert.equal(found, undefined);
+  });
+
+  it("returns undefined when the model only exists under another provider, even for exact ids", () => {
+    const found = findModelInRegistry(models, "google-gemini-cli", "claude-opus-4-7");
+    assert.equal(found, undefined);
   });
 
   it("returns undefined for non-existent model", () => {

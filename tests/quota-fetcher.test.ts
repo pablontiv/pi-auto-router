@@ -18,6 +18,7 @@ import {
   parseRetryAfterMs,
   readAuth,
   readPercentCandidate,
+  resolveUsageEndpoints,
   usageToWindows,
   writeAuth,
   type FetchLike,
@@ -100,6 +101,16 @@ describe("readAuth/writeAuth", () => {
     assert.deepEqual(readAuth(authFile), auth);
     const leftovers = fs.readdirSync(path.dirname(authFile)).filter((name) => name.includes(".tmp-"));
     assert.deepEqual(leftovers, []);
+  });
+
+  it("writes auth with owner-only permissions even after replacing a 0600 file", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "quota-auth-mode-"));
+    const authFile = path.join(dir, "auth.json");
+    fs.writeFileSync(authFile, JSON.stringify({ anthropic: { access: "old" } }), { mode: 0o600 });
+    assert.equal(writeAuth({ anthropic: { access: "new" } }, authFile), true);
+    // Credential files must stay owner-only; a permissive umask or a replace
+    // operation must not widen access to other local users.
+    assert.equal(fs.statSync(authFile).mode & 0o777, 0o600);
   });
 });
 
@@ -479,5 +490,25 @@ describe("usageToWindows", () => {
       fetchedAt: 1_700_000_000_000,
     });
     assert.equal(windows[0].source, "stale-cache");
+  });
+});
+
+describe("resolveUsageEndpoints", () => {
+  it("uses the default Google endpoints when no overrides are set", () => {
+    const endpoints = resolveUsageEndpoints({});
+    assert.ok(endpoints.gemini.startsWith("https://cloudcode-pa.googleapis.com/"));
+    assert.ok(endpoints.antigravity.startsWith("https://cloudcode-pa.googleapis.com/"));
+  });
+
+  it("refuses non-HTTPS endpoint overrides that would receive OAuth bearer tokens", () => {
+    // A custom endpoint receives the user's OAuth token; plaintext HTTP or
+    // unexpected hosts must fail closed instead of exfiltrating credentials.
+    const endpoints = resolveUsageEndpoints({ PI_GEMINI_USAGE_ENDPOINT: "http://attacker.invalid/quota" });
+    assert.ok(endpoints.gemini.startsWith("https://cloudcode-pa.googleapis.com/"));
+  });
+
+  it("refuses HTTPS overrides to hosts outside the Google allowlist", () => {
+    const endpoints = resolveUsageEndpoints({ PI_ANTIGRAVITY_USAGE_ENDPOINT: "https://evil.example.com/quota" });
+    assert.ok(endpoints.antigravity.startsWith("https://cloudcode-pa.googleapis.com/"));
   });
 });

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Security
+
+- **Strict provider↔model binding**: model resolution no longer falls back to a global fuzzy search across all providers, and an embedded `provider/model` prefix inside `modelId` is honored only when it matches the declared target provider. A typo, removed model, or upstream rename now fails the target closed (cooldown + next declared target) instead of resolving another provider's model and sending it the prompt and the declared provider's credential.
+- **Policy rules fail closed**: `exclude-provider` and `force-billing` are now hard boundaries. The candidate fallback chain stays inside the policy-filtered set; when no policy-compliant target remains, routing errors with an explanation instead of silently restoring excluded or wrongly-billed providers. Documented budget fail-open behavior is unchanged, but it now operates within the filtered set too. Shadow mode also respects exclusions.
+- **Failover no longer leaks the first provider's terminal `done`**: a `done` event carrying a retryable error is classified before forwarding; the outer stream only terminates with the final selected target's result. Previously, adapters reporting retryable failures as completed messages closed the stream with the first provider's error even when a fallback target succeeded.
+- **Credential file permissions**: `writeAuth` writes temporary files with mode `0600` and enforces `0600` after rename, so OAuth refreshes no longer replace a private `auth.json` with a world-readable file under permissive umasks. Parent directories are created with `0700`.
+- **Usage endpoint overrides are validated**: `PI_GEMINI_USAGE_ENDPOINT` / `PI_ANTIGRAVITY_USAGE_ENDPOINT` are honored only for HTTPS URLs on expected Google hosts; anything else falls back to the default endpoint instead of sending OAuth bearer tokens to arbitrary (possibly plaintext) URLs.
+- **Global system-prompt nudge is opt-in**: the `before_agent_start` tool-naming nudge (which modifies the system prompt of every agent run, not just auto-router requests) is now disabled by default; enable with `AUTO_ROUTER_TOOL_NUDGE=1`.
+
 ## 0.2.4
 
 **Release date:** 2026-08-12
